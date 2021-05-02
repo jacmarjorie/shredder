@@ -35,7 +35,7 @@ class JsonWriter {
     val p1 = TheRootSchema(paragraphs.toList, name)
     implicit val formats = DefaultFormats
     val jsonString = write(p1)
-    println(jsonString)
+    // println(jsonString)
     jsonString
   }
 
@@ -43,7 +43,7 @@ class JsonWriter {
     val p1 = ParagraphSO(title, text)
     implicit val formats = DefaultFormats
     val jsonString = write(p1)
-    println(jsonString)
+    // println(jsonString)
     jsonString
   }
 }

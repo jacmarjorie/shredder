@@ -46,7 +46,7 @@ object Printer {
     }
     case Bind(x, e1, e2) => s"{ ${quote(e2)} | ${quote(x)} := ${quote(e1)} }"
     case CDeDup(e1) => s"DeDup(${quote(e1)})"
-    case CGroupBy(e1, v, grp, value) => s"(${quote(e1)}).groupBy(${grp.mkString(",")}; ${value.mkString(",")})"
+    case CGroupBy(e1, v, grp, value, gname) => s"""(${quote(e1)}).groupBy(${grp.mkString(",")}; ${value.mkString(",")}, "$gname")"""
     case CReduceBy(e1, v, grp, value) => s"(${quote(e1)}).reduceBy(${grp.mkString(",")}; ${value.mkString(",")})"
     case CNamed(n, e) => named(n, quote(e))
     case LinearCSet(exprs) => linset(exprs.map(quote(_)))
@@ -57,23 +57,31 @@ object Printer {
     case TupleCDict(fs) => tupledict(fs.map(f => f._1 -> quote(f._2)))
     case DictCUnion(e1, e2) => dictunion(quote(e1), quote(e2))
 
-    case Select(x, v, p, e) => 
-      val attrs = e.tp.attrs.keySet.toList.mkString(",")
-      s"""| <-- (${quote(v)}) -- SELECT[ ${quote(p)}, $attrs ](${quote(x)})""".stripMargin
+    case Select(x, v, p) => 
+      s"""| SELECT[ ${quote(p)} ](${quote(x)})
+          | """.stripMargin
     case AddIndex(e1, name) => s"INDEX(${quote(e1)})"
     case Projection(e1, v, p, fields) => 
-      s"""|PROJECT[${fields.mkString(",")}, ${quote(p)}](${quote(e1)})""".stripMargin
+      s"""|PROJECT[${fields.mkString(",")}, ${quote(p)}](${quote(e1)})
+          |""".stripMargin
     case Nest(e1, v, keys, value, filter, nulls, ctag) =>
-      s"""|NEST^{${quote(value)}, ${quote(filter)}, $ctag}_{U, ${keys.mkString(",")} / ${nulls.mkString(",")}}(${quote(e1)})""".stripMargin
+      s"""|NEST^{${quote(value)}, ${quote(filter)}, $ctag}_{U, ${keys.mkString(",")} / ${nulls.mkString(",")}}(${quote(e1)})
+          |""".stripMargin
     case Unnest(e1, v, path, v2, filter, fields) =>
-      s"""|UNNEST[${quote(v)}.$path, ${quote(filter)}, ${fields.mkString(",")}](${quote(e1)})""".stripMargin
+      s"""|UNNEST[${quote(v)}.$path, ${quote(filter)}, ${fields.mkString(",")}](${quote(e1)})
+          |""".stripMargin
     case OuterUnnest(e1, v, path, v2, filter, fields) =>
-      s"""|OUTERUNNEST[${quote(v)}.$path, ${quote(filter)}, ${fields.mkString(",")}](${quote(e1)})""".stripMargin
+      s"""|OUTERUNNEST[${quote(v)}.$path, ${quote(filter)}, ${fields.mkString(",")}](${quote(e1)})
+          |""".stripMargin
     case Join(left, v1, right, v2, cond, fields) => 
-      s"""|${quote(left)} JOIN [${quote(cond)}, ${fields.mkString(",")}] ${quote(right)}""".stripMargin
+      s"""|${quote(left)} JOIN [${quote(cond)}, ${fields.mkString(",")}] ${quote(right)}
+          |""".stripMargin
     case OuterJoin(left, v1, right, v2, cond, fields) => 
-      s"""|${quote(left)} OUTERJOIN [${quote(cond)}, ${fields.mkString(",")}] ${quote(right)}""".stripMargin
-    case Reduce(e1, v, grp, value) => quote(CReduceBy(e1, v, grp, value))
+      s"""|${quote(left)} OUTERJOIN [${quote(cond)}, ${fields.mkString(",")}] ${quote(right)}
+          |""".stripMargin
+    case Reduce(e1, v, grp, value) => 
+      s"""| REDUCE[ keys = {${grp.mkString(",")}} values = {${value.mkString(",")}} ](${quote(e1)})
+          | """.stripMargin
     
     case FlatDict(e1) => flatdict(quote(e1))
     case GroupDict(e1) => groupdict(quote(e1))

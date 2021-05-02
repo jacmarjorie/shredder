@@ -13,7 +13,7 @@ import org.apache.spark.sql.functions._
 
 case class CopyNumber(cn_gene_id: String, cn_gene_name: String, cn_chromosome: String, cn_start: Int, cn_end: Int, cn_copy_number: Int, min_copy_number: Int, max_copy_number: Int, cn_aliquot_uuid: String)
 
-class CopyNumberLoader(spark: SparkSession) {
+class CopyNumberLoader(spark: SparkSession) extends Serializable {
  
    import spark.implicits._
    val schema = StructType(Array(StructField("cn_gene_id", StringType),

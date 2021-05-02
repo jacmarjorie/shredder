@@ -9,7 +9,10 @@ trait SparkTypeHandler {
   var types: Map[Type, String]
   var typelst: Seq[Type] = Seq()
   val dotEquality: Boolean = false
-  val bagtype: String = "Vector"
+  val BAGTYPE: String = "Vector"
+  val LABELTYPE: String = "String"
+
+
 
   /** Translate a k,v record into a tuple type
     * @deprecated this should no longer be required for datasets
@@ -57,7 +60,7 @@ trait SparkTypeHandler {
     */
   def generateType(tp: Type): String = tp match {
     case RecordCType(fs) if fs.isEmpty => "Unit"
-    case LabelType(fs) if fs.isEmpty => "String"//"Long"
+    case LabelType(fs) if fs.isEmpty => LABELTYPE
     case RecordCType(fs) if fs.contains("element") && fs.size == 1 => generateType(fs("element"))
     //case RecordCType(fs) if fs.keySet == Set("_1", "_2") => fs.generateType(fs._2).mkString("(",",",")")
     // case RecordCType(ms) if ms.values.toList.contains(EmptyCType) => ""
@@ -71,13 +74,13 @@ trait SparkTypeHandler {
     case LongType => "Long"
     case TTupleType(fs) => s"(${fs.map(generateType(_)).mkString(",")})"
     case BagCType(tp) => 
-		s"$bagtype[${generateType(tp)}]" //combineByKey, etc. may need this to be iterable
+		s"$BAGTYPE[${generateType(tp)}]" //combineByKey, etc. may need this to be iterable
     case MatDictCType(lbl, dict) => generateType(BagCType(RecordCType(tp.attrs)))//s"${generateType(dict)}"
     case BagDictCType(flat @ BagCType(TTupleType(fs)), dict) =>
       dict match {
         case TupleDictCType(ds) if !ds.filter(_._2 != EmptyDictCType).isEmpty =>
-          s"($bagtype[(${generateType(fs.head)}, ${generateType(fs.last)})], ${generateType(dict)})"
-        case _ => s"($bagtype[(${generateType(fs.head)}, ${generateType(fs.last)})], Unit)"
+          s"($BAGTYPE[(${generateType(fs.head)}, ${generateType(fs.last)})], ${generateType(dict)})"
+        case _ => s"($BAGTYPE[(${generateType(fs.head)}, ${generateType(fs.last)})], Unit)"
       }
     case TupleDictCType(fs) if !fs.filter(_._2 != EmptyDictCType).isEmpty =>
       generateType(RecordCType(fs.filter(_._2 != EmptyDictCType)))

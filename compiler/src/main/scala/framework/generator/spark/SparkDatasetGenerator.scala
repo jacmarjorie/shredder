@@ -16,13 +16,13 @@ import framework.utils.Utils.ind
   * @param inputs map of input types that should not be reproduced (important for programs)
   */
 class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = false, optLevel: Int = 2,
-  unshred: Boolean = false, evalFinal: Boolean = true, inputs: Map[Type, String] = Map()) extends SparkTypeHandler with SparkUtils {
+  unshred: Boolean = false, evalFinal: Boolean = true, inputs: Map[Type, String] = Map(), dedup: Boolean = true) extends SparkTypeHandler with SparkUtils {
 
   implicit def expToString(e: CExpr): String = generate(e)
 
   var types: Map[Type, String] = inputs
   var encoders: Map[String, Type] = Map()
-  override val bagtype: String = "Seq"
+  override val BAGTYPE: String = "Seq"
   val ext = new Extensions{}
 
   /** Generates the code for the set of case class records associated to the 
@@ -35,6 +35,12 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
 	val h1 = typelst.map(x => generateTypeDef(x)).mkString("\n")
     val h2 = inputs.withFilter(x => !names.contains(x._2)).map( x => generateTypeDef(x._1)).toList
     if (h2.nonEmpty) { s"$h1\n${h2.mkString("\n")}" } else { h1 }
+  }
+
+  def generateHeaderList(names: List[String] = List()): Seq[String] = {
+  val h1 = typelst.map(x => generateTypeDef(x)).toSeq
+    val h2 = inputs.withFilter(x => !names.contains(x._2)).map( x => generateTypeDef(x._1)).toSeq
+    if (h2.nonEmpty) { h1 ++ h2 } else { h1 }
   }
 
   /** Generates the code for the set of implicit encoders associated to the 
@@ -136,10 +142,12 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
     */
   private def generateReference(e: CExpr, literal: Boolean = false): String = e match {
     case Project(v, f) => v.tp match {
+      case LabelType(fs) if fs.size == 1 => s"""col("_LABEL")"""
       case LabelType(_) => s"""col("_LABEL").getField("$f")"""
       case _ => s"""col("$f")"""
     }
-    case Label(fs) if fs.size == 1 => generateReference(fs.head._2)
+    case Label(fs) if fs.size == 1 => 
+      generateReference(fs.head._2)
     case Label(fs) => 
       encoders = encoders + (generateType(e.tp) -> e.tp)
       handleType(e.tp)
@@ -225,7 +233,7 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
       case (Some(CReduceBy(_,_,_,values)), _) =>
         buildLocalAgg(e.path, nrec, gv2, values.toSet, e.filter)
       case (_, Constant(true)) => s"${e.path}.map( $gv2 => $gnrec )"
-      case _ => s"${e.path}.flatMap( $gv2 => if (${generate(e.filter)}) Seq($gnrec) else Seq() )"
+      case _ => s"${e.path}.flatMap( $gv2 => if (${accessOption(e.filter, e.v2)}) Seq($gnrec) else Seq() )"
     }
 
     if (e.outer){
@@ -286,7 +294,8 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
     case CUdf(n, e1, tp) => s"$n(${generateReference(e1)})"
 	  case Sng(e) => s"Seq(${generate(e)})"
     case CGet(e1) => s"${generate(e1)}.head"
-    case CDeDup(e1) => s"${generate(e1)}.distinct"
+    case CDeDup(e1) if dedup => s"${generate(e1)}.distinct"
+    case CDeDup(e1) => s"${generate(e1)}/** distinct removed for stats gathering **/"
     case Label(fs) if fs.size == 1 => generate(fs.head._2)
     case Record(fs) if fs.contains("element") && fs.size == 1 => fs("element")
     case Record(fs) => {
@@ -296,7 +305,7 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
     }
     case Tuple(fs) => s"(${fs.map(f => generate(f)).mkString(",")})"
 
-    case Project(e1, "_LABEL") => s"${generate(e1)}"
+    // case Project(e1, "_LABEL") => s"${generate(e1)}._LABEL"
     case Project(e1, "element") => s"${generate(e1)}"
     case Project(e2 @ Record(fs), field) => 
       s"${generate(e2)}.${kvName(field)(fs.size)}"
@@ -345,8 +354,9 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
       val select = if (in.tp.attrs.keySet == nfields) ""
         else s".select(${nfields.toList.mkString("\"", "\", \"", "\"")})"
 
+      val projectNulls = fields.contains("remove_nulls")
       // input table attributes
-      val projectCols = fields.toSet
+      val projectCols = fields.toSet - "remove_nulls"
       // output attributes
       val newCols = pat.fields.keySet
 
@@ -383,14 +393,14 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
       val ncast = if (in.tp.attrs.keySet == nfields && allColumns.isEmpty) ""
         else s".as[${generateType(pat.tp)}]"
 
-      s"""|${generate(in)}$select
+      // project nulls needs more testing
+      s"""|${generate(in)}${if (projectNulls) ".na.drop()" else ""}$select
           $columns
           | $ncast
           |""".stripMargin
 
     // lookup iteration translates to inner join 
     case ej @ OuterJoin(left, v1, right, v2, Equals(Project(_, p1), Project(_, p2 @ "_1")), filt) if right.tp.isDict =>
-   
       // adjust lookup column of dictionary
       val rcol = s"${p1}${p2}"
       val rtp = rename(right.tp.attrs, p2, rcol)
@@ -418,13 +428,12 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
       s"""|${generate(left)}$lcolumn
           |   .as[$gltp].equiJoin$classTags(
           |   ${generate(right)}.withColumnRenamed("${p2}", "$rcol").as[$grtp], 
-          |   Seq("$lcol", "$rcol"), "inner").drop("$lcol", "$rcol")
+          |   Seq("$lcol"), Seq("$rcol"), "inner").drop("$lcol", "$rcol")
           |   .as[${generateType(nrecTp)}]
           |""".stripMargin
 
     // JOIN operator
-    case ej:JoinOp => 
-
+    case ej:JoinOp =>
       handleType(ej.tp.tp)
       val nrec = generateType(ej.tp.tp)
       val gright = generate(ej.right)
@@ -432,7 +441,7 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
 
       if (ej.isEquiJoin){
 
-          val (p1, p2) = (ej.p1, ej.p2)
+          val (p1, p2) = (ej.p1s.mkString("\",\""), ej.p2s.mkString("\",\""))
 
           val classTags = if (!skew) ""
             else {
@@ -441,7 +450,7 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
             }
 
           s"""|${generate(ej.left)}.equiJoin$classTags($gright, 
-              | Seq("${p1}", "${p2}"), "${ej.jtype}").as[$nrec]
+              | Seq("${p1}"), Seq("${p2}"), "${ej.jtype}").as[$nrec]
               |""".stripMargin
 
         }else {
@@ -598,42 +607,51 @@ class SparkDatasetGenerator(cache: Boolean, evaluate: Boolean, skew: Boolean = f
           |""".stripMargin
 
     // filter
-    case Select(x, v, filt, e2) => 
+    case Select(x, v, filt) => 
+      handleType(v.tp)
       val filter = filt match {
         case Constant(true) => ""
         case _ => s".filter(${generateReference(filt)})"
       }
-      if ((v.tp.attrs.keySet -- e2.tp.attrs.keySet).isEmpty) 
-        s"${generate(x)}$filter"
-      else {
-        handleType(e2.tp)
-        val cols = e2.tp.attrs.keySet.toList.map(c => "\""+c+"\"").mkString(",")
-        s"""|${generate(x)}.select($cols)$filter
-            | .as[${generateType(e2.tp)}]""".stripMargin
-      }
+      s"""|${generate(x)}$filter
+          |""".stripMargin
 
     case Bind(v, CNamed(n, e1), LinearCSet(fs)) =>
       val gtp = if (skew) "[Int]" else ""
-      val repart = if (n.contains("MDict")) s""".repartition$gtp($$"_1")""" else ""
+      val repart = if (n.contains("MDict")){
+        if (e1.tp.attrs.contains("_LABEL")) s""".repartition$gtp($$"_LABEL")"""
+        else s""".repartition$gtp($$"_1")""" 
+      }else ""
       val gv = generate(v)
       s"""|val $gv = ${generate(e1)}
           |val $n = $gv$repart
-          |//$n.print
-          |${if (!cache) comment(n) else n}.cache
-          |${if (!cache && !evalFinal) comment(n) else n}.count
+          |//$n.count
           |""".stripMargin
+          // |${if (!cache) comment(n) else n}.cache
+          // |${if (!cache && !evalFinal) comment(n) else n}.count
 
     case Bind(v, CNamed(n, e1), e2) =>
       val gtp = if (skew) "[Int]" else ""
-      val repart = if (n.contains("MDict")) s""".repartition$gtp($$"_1")""" else ""
+      val repart = if (n.contains("MDict")){
+        if (e1.tp.attrs.contains("_LABEL")) s""".repartition$gtp($$"_LABEL")"""
+        else s""".repartition$gtp($$"_1")""" 
+      }else ""
+
       val gv = generate(v)
-      s"""|val $gv = ${generate(e1)}
-          |val $n = $gv$repart
-          |//$n.print
-          |${if (!cache || evalFinal) comment(n) else n}.cache
-          |${if (!evaluate) comment(n) else n}.count
-          |${generate(e2)}
-          |""".stripMargin
+      val ge2 = if (e2.isInstanceOf[Variable]) "" else generate(e2)
+       s"""|val $gv = ${generate(e1)}
+           |val $n = $gv$repart  
+           |${if (cache) n else comment(n)}.cache
+           |${if (cache) n else comment(n)}.count
+           |$ge2
+           |""".stripMargin   
+      // s"""|val $gv = ${generate(e1)}
+      //     |val $n = $gv$repart
+      //     |//$n.print
+      //     |${if (!cache || evalFinal) comment(n) else n}.cache
+      //     |${if (!evaluate) comment(n) else n}.count
+      //     |$ge2
+      //     |""".stripMargin
 
     case LinearCSet(fs) => ""
     case Bind(v, e1, e2) => 

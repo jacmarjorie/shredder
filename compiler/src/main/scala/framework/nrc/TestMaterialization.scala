@@ -418,6 +418,62 @@ object TestMaterialization extends App
     println("Unshredded program: \n" + quote(unshredded) + "\n")
   }
 
+  def testLet(): Unit = {
+
+    val lettest = genomic.LetTest0()
+    val tbls = lettest.tbls
+
+    // val imp = """if (t.impact = "HIGH") then 0.80 
+    //               else if (t.impact = "MODERATE") then 0.50
+    //               else if (t.impact = "LOW") then 0.30
+    //               else 0.01"""
+
+    // val query =
+    //   s"""
+    //       let cnvCases :=
+    //         for s in samples union
+    //           for c in copynumber union
+    //             if (s.bcr_aliquot_uuid = c.cn_aliquot_uuid)
+    //             then {(sid := s.bcr_patient_uuid, gene := c.cn_gene_id, cnum := c.cn_copy_number)}
+    //     in
+    //       (for o in occurrences union
+    //         for t in o.transcript_consequences union
+    //           for c in cnvCases union
+    //             if (o.donorId = c.sid && t.gene_id = c.gene)
+    //             then {(hybrid_case := o.donorId, hybrid_gene := t.gene_id, hybrid_score := $imp * (c.cnum + 0.01))}).sumBy({hybrid_case, hybrid_gene}, {hybrid_score})
+    //   """
+
+    // you can see this version in the file where the query is defined, 
+    // but it just has multiple lets:
+    // LetTest0 <= 
+    //   let cnvCases := $cnvs
+    //   in let initScores0 := $initScores 
+    //   in $lettest
+        
+    val query = lettest.query
+
+    val parser = Parser(tbls)
+    // val program = parser.parse(query).get.asInstanceOf[Program]
+    val bagexpr = parser.parse(query, parser.term).get.asInstanceOf[BagExpr]
+    val program = Program(Assignment("LetTest0", bagexpr))
+
+    println("Program: \n" + quote(program) + "\n")
+
+    val (shredded, _) = shredCtx(program)
+    println("Shredded program: \n" + quote(shredded) + "\n")
+
+    val optShredded = optimize(shredded)
+    println("Shredded program optimized: \n" + quote(optShredded) + "\n")
+
+    val materializedProgram = materialize(optShredded, eliminateDomains = true)
+    println("Materialized program (if hoists + dict iteration): \n" + quote(materializedProgram.program) + "\n")
+
+    val unshredded = unshred(optShredded, materializedProgram.ctx)
+    println("Unshredded program: \n" + quote(unshredded) + "\n")
+
+  }
+
+  testLet()
 //  runSequential()
 //   runSequential2()
 //   domainTest()
@@ -429,7 +485,7 @@ object TestMaterialization extends App
   //matTupleDictUnsupported1()
   //matTupleDictUnsupported2()
   //matTupleDictUnsupported3()
-  matTupleDictUnsupported4()
+  // matTupleDictUnsupported4()
   // similar query that projects less attributes, and passes
   //matTupleDictUnsupported5()
 

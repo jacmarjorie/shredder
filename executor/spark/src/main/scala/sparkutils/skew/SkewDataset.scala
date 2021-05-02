@@ -78,8 +78,11 @@ object SkewDataset{
       * @param joinType string join type, default "inner"
       * @return the result of the join
       */
-    def equiJoinWith[S: Encoder : ClassTag](right: Dataset[S], usingColumns: Seq[String], joinType: String): Dataset[(T,S)] = {
-      left.joinWith(right, col(usingColumns(0)) === col(usingColumns(1)), joinType)
+    def equiJoinWith[S: Encoder : ClassTag](right: Dataset[S], leftCols: Seq[String], rightCols: Seq[String], joinType: String): Dataset[(T,S)] = {
+      var cond: Column = col(leftCols(0)) === col(rightCols(0))
+      if (leftCols.size > 1) cond = (cond) && (col(leftCols(1)) === col(rightCols(1)))
+
+      left.joinWith(right, cond, joinType)
     }
 
     /** Equi-join this Dataset with the right, this returns a Dataframe
@@ -89,8 +92,13 @@ object SkewDataset{
       * @param joinType string join type, default "inner"
       * @return the result of the join
       */
-    def equiJoin[S: Encoder : ClassTag](right: Dataset[S], usingColumns: Seq[String], joinType: String): DataFrame = {
-      left.join(right, col(usingColumns(0)) === col(usingColumns(1)), joinType)
+    def equiJoin[S: Encoder : ClassTag](right: Dataset[S], leftCols: Seq[String], rightCols: Seq[String], joinType: String): DataFrame = {
+
+      var cond: Column = col(leftCols(0)) === col(rightCols(0))
+      if (leftCols.size > 1) cond = (cond) && (col(leftCols(1)) === col(rightCols(1)))
+
+      left.join(right, cond, joinType)
+
     }
     
     /** Cogroup this dataset with a Dataset that has already been formatted by groupByKey
@@ -317,21 +325,26 @@ object SkewDataset{
       * performing the standard plan for the light and a broadcast join for the heavy
       * This drops the known heavy key information, though that might not be required
       * @param right Dataset skew-triple to join with 
-      * @param usingColumns a sequence of columns ordered left to right defining join columns, note this 
+      * @param leftCols a sequence of columns ordered left to right defining join columns, note this 
       * is different than the Spark native implementation of joinWith
+      * @param rightCols a sequence of columns ordered left to right defining join columns
       * @param joinType string join type, default "inner"
       * @return the result of the join
       */
-    def equiJoinWith[S: Encoder : ClassTag](right: (Dataset[S], Dataset[S]), usingColumns: Seq[String], joinType: String = "inner")
+    def equiJoinWith[S: Encoder : ClassTag](right: (Dataset[S], Dataset[S]), leftCols: Seq[String], rightCols: Seq[String], joinType: String = "inner")
     (implicit arg0: Encoder[(T,S)]): (Dataset[(T, S)], Dataset[(T,S)]) = {
+
+      val usingColumns = leftCols ++ rightCols
 
       val hkeys = key match {
         case Some(k) if usingColumns.contains(k) => heavyKeys
         case _ => light.sparkSession.sparkContext.broadcast(Set.empty[K])
       }
 
+      // MAJOR TODO HERE FIX THIS FOR SKEW!!!
       if (hkeys.value.nonEmpty && !key.isEmpty){
         val rkey = usingColumns(1)
+
         val runion = right.union
         val rlight = runion.lfilter(col(rkey), hkeys)
         val lresult = light.joinWith(rlight, col(key.get) === col(rkey), joinType)
@@ -341,7 +354,7 @@ object SkewDataset{
 
         (lresult, hresult)
       }else{
-        (light, heavy).equiJoinWith[S, K](right, usingColumns, joinType)
+        (light, heavy).equiJoinWith[S, K](right, leftCols, rightCols, joinType)
       }
 
     }
@@ -355,8 +368,11 @@ object SkewDataset{
       * @param joinType string join type, default "inner"
       * @return the result of the join
       */
-    def equiJoin[S: Encoder : ClassTag, J: ClassTag](right: (Dataset[S], Dataset[S]), usingColumns: Seq[String], joinType: String): (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
-	  val hkeys = key match {
+    def equiJoin[S: Encoder : ClassTag, J: ClassTag](right: (Dataset[S], Dataset[S]), leftCols: Seq[String], rightCols: Seq[String], joinType: String): (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
+	    
+      val usingColumns = leftCols ++ rightCols
+
+      val hkeys = key match {
         case Some(k) if usingColumns.contains(k) => heavyKeys
         case _ => light.sparkSession.sparkContext.broadcast(Set.empty[K])
       }
@@ -371,13 +387,13 @@ object SkewDataset{
 
         (lresult, hresult, key, hkeys)
       }else{
-        (light, heavy).equiJoin[S, K](right, usingColumns, joinType)
+        (light, heavy).equiJoin[S, K](right, leftCols, rightCols, joinType)
       }
 
     }
 
-    def equiJoin[S: Encoder : ClassTag, J: ClassTag](right: (Dataset[S], Dataset[S], Option[String], Broadcast[Set[K]]), usingColumns: Seq[String], joinType: String): (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
-      equiJoin[S,J]((right.light, right.heavy), usingColumns, joinType)
+    def equiJoin[S: Encoder : ClassTag, J: ClassTag](right: (Dataset[S], Dataset[S], Option[String], Broadcast[Set[K]]), leftCols: Seq[String], rightCols: Seq[String], joinType: String): (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
+      equiJoin[S,J]((right.light, right.heavy), leftCols, rightCols, joinType)
     }
 
     /** Default join for complex join conditions **/
@@ -674,15 +690,16 @@ object SkewDataset{
       * @param joinType identifies the type of join
       * @return skew-triple result from the skew-aware equiJoinWith
       */
-    def equiJoinWith[S: Encoder : ClassTag, K: Encoder : ClassTag](right: (Dataset[S], Dataset[S]), usingColumns: Seq[String], joinType: String = "inner")
+    def equiJoinWith[S: Encoder : ClassTag, K: Encoder : ClassTag](right: (Dataset[S], Dataset[S]), leftCols: Seq[String], rightCols: Seq[String], joinType: String = "inner")
       (implicit arg0: Encoder[(T,S)]): (Dataset[(T, S)], Dataset[(T,S)]) = {
+      val usingColumns = leftCols ++ rightCols
       val nkey = usingColumns(0)
       val (dfull, hk) = heavyKeys[K](nkey)
       if (hk.nonEmpty){
         val hkeys = dfull.sparkSession.sparkContext.broadcast(hk)
-        (dfull.lfilter[K](col(nkey), hkeys), dfull.hfilter[K](col(nkey), hkeys), Some(nkey), hkeys).equiJoinWith(right, usingColumns, joinType)
+        (dfull.lfilter[K](col(nkey), hkeys), dfull.hfilter[K](col(nkey), hkeys), Some(nkey), hkeys).equiJoinWith(right, leftCols, rightCols, joinType)
       }else{
-        val result = dfull.equiJoinWith(right.union, usingColumns, joinType)
+        val result = dfull.equiJoinWith(right.union, leftCols, rightCols, joinType)
         (result, result.sparkSession.emptyDataset[(T,S)].repartition(1))
       }
     }
@@ -695,21 +712,22 @@ object SkewDataset{
       * @param joinType identifies the type of join
       * @return skew-triple result from the skew-aware equiJoinWith
       */
-    def equiJoin[S: Encoder : ClassTag, K: ClassTag](right: (Dataset[S], Dataset[S]), usingColumns: Seq[String], joinType: String)(implicit arg0: Encoder[K]): 
+    def equiJoin[S: Encoder : ClassTag, K: ClassTag](right: (Dataset[S], Dataset[S]), leftCols: Seq[String], rightCols: Seq[String], joinType: String)(implicit arg0: Encoder[K]): 
     (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
+      val usingColumns = leftCols ++ rightCols
       val nkey = usingColumns(0)
       val (dfull, hk) = heavyKeys[K](nkey)
       if (hk.nonEmpty){
         val hkeys = dfull.sparkSession.sparkContext.broadcast(hk)
-        (dfull.lfilter[K](col(nkey), hkeys), dfull.hfilter[K](col(nkey), hkeys), Some(nkey), hkeys).equiJoin[S,K](right, usingColumns, joinType)
+        (dfull.lfilter[K](col(nkey), hkeys), dfull.hfilter[K](col(nkey), hkeys), Some(nkey), hkeys).equiJoin[S,K](right, leftCols, rightCols, joinType)
       }else{
-        (dfull.equiJoin(right.union, usingColumns, joinType), light.emptyDF, Some(nkey), light.sparkSession.sparkContext.broadcast(Set.empty[K]))
+        (dfull.equiJoin(right.union, leftCols, rightCols, joinType), light.emptyDF, Some(nkey), light.sparkSession.sparkContext.broadcast(Set.empty[K]))
       }
     }
     
-    def equiJoin[S: Encoder : ClassTag, K: ClassTag](right: (Dataset[S], Dataset[S], Option[String], Broadcast[Set[K]]), usingColumns: Seq[String], joinType: String)(implicit arg0: Encoder[K]): 
+    def equiJoin[S: Encoder : ClassTag, K: ClassTag](right: (Dataset[S], Dataset[S], Option[String], Broadcast[Set[K]]), leftCols: Seq[String], rightCols: Seq[String], joinType: String)(implicit arg0: Encoder[K]): 
       (DataFrame, DataFrame, Option[String], Broadcast[Set[K]]) = {
-        equiJoin[S,K]((right.light, right.heavy), usingColumns, joinType)
+        equiJoin[S,K]((right.light, right.heavy), leftCols, rightCols, joinType)
     }
  
     /** Default join for complex join conditions **/

@@ -38,7 +38,7 @@ object Unnester {
     case InputRef(name, _) => name
     case FlatDict(e1) => getName(e1)
     case Variable(n, tp) => n
-    case _ => sys.error(s"unsupported name extraction $e")
+    case _ => sys.error(s"unsupported name extraction ${Printer.quote(e)}")
   }
 
   def unnest(e: CExpr)(implicit ctx: Ctx): CExpr = e match {
@@ -47,7 +47,7 @@ object Unnester {
     case Comprehension(e1, v, p, e2) if u.isEmpty && w.isEmpty && E.isEmpty =>
       val ne1 = AddIndex(e1, getName(e1)+"_index")
       val nv = Variable(v.name, ne1.tp.tp)
-      unnest(e2)((u, nv.tp.attrs, Some(Select(ne1, nv, replace(p, nv), nv)), tag))
+      unnest(e2)((u, nv.tp.attrs, Some(Select(ne1, nv, replace(p, nv))), tag))
 
     case c @ Comprehension(e1 @ Project(e0, f), v, p, e2) if !w.isEmpty =>
       assert(!E.isEmpty)
@@ -71,9 +71,11 @@ object Unnester {
       assert(!E.isEmpty)
       val fields = ((w.keySet - p1) ++ (v1.tp.attrs.keySet - "_1"))
       val nv = wvar(w)
-      val joinCond = normalizer.and(Equals(Project(nv, p1), Project(v1, "_1")), filt)
-      val nE = OuterJoin(E.get, nv, dict, v1, joinCond, fields.toList)
-      unnest(e2)((u, flat(w, v1.tp), Some(nE), tag))
+      val nv1 = Variable.freshFromBag(dict.tp)
+	    val fdict = Select(dict, nv1, filt)
+      val joinCond = Equals(Project(nv, p1), Project(nv1, "_1"))
+      val nE = OuterJoin(E.get, nv, fdict, nv1, joinCond, fields.toList)
+      unnest(e2)((u, flat(w, nv1.tp), Some(nE), tag))
 
     case Comprehension(e1:Comprehension, v, p, Constant(c)) => unnest(e1)((u, w, E, tag)) match {
       case Nest(e2, v2, keys2, values2, filt, nulls, ntag) => 
@@ -86,9 +88,10 @@ object Unnester {
       val name = getName(e1)
       val right = AddIndex(e1, name+"_index")
       val nv = Variable(v.name, right.tp.tp)
-      val (nw, nE) = 
-        if (u.isEmpty) (flat(w, nv.tp), Join(E.get, wvar(w), Select(right, nv, Constant(true), nv), nv, cond, Nil))
-        else (flat(w, nv.tp.outer), OuterJoin(E.get, wvar(w), Select(right, nv, Constant(true), nv), nv, cond, Nil))
+
+	    val (nw, nE) = 
+        if (u.isEmpty) (flat(w, nv.tp), Join(E.get, wvar(w), Select(right, nv, Constant(true)), nv, cond, Nil))
+        else (flat(w, nv.tp.outer), OuterJoin(E.get, wvar(w), Select(right, nv, Constant(true)), nv, cond, Nil))
       unnest(e2)((u, nw, Some(nE), tag))
 
     case s @ If(cnd, Sng(t @ Record(fs)), nextIf) =>
@@ -116,12 +119,20 @@ object Unnester {
       case e2 => Reduce(e2, v1, keys, values)
     }
 
+    case CGroupBy(e1, v1, keys, values, gname) => 
+      val nE = unnest(e1)((u, w, E, gname)) 
+      val nv = wvar(w)
+      val tup = Record(values.map(v => v -> Project(nv, v)).toMap)
+      Nest(nE, nv, keys, tup, Constant(true), (w.keySet -- u.keySet).toList, gname)
+
     case CDeDup(e1) => CDeDup(unnest(e1)((u, w, E, tag)))
-    case Bind(x, e1, e2) => Bind(x, unnest(e1)((u, w, E, tag)), unnest(e2)((u, w, E, tag)))
+    case Bind(x, e1, e2) => 
+      Bind(x, unnest(e1)((u, w, E, tag)), unnest(e2)((u, w, E, tag)))
     case FlatDict(e1) => FlatDict(unnest(e1)((u, w, E, tag)))
     case GroupDict(e1) => GroupDict(unnest(e1)((u, w, E, tag)))
     case LinearCSet(exprs) => LinearCSet(exprs.map(unnest(_)((u, w, E, tag))))
-    case CNamed(n, exp) => CNamed(n, unnest(exp)((u, w, E, tag)))
+    case CNamed(n, exp) => 
+      CNamed(n, unnest(exp)((u, w, E, tag)))
     case _ => e
 
   }

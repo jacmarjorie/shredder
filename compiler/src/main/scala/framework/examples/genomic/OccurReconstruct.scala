@@ -214,7 +214,7 @@ object ClinicalRunExample extends DriverGene {
   val name = "ClinicalRunExample"
 
   override def loadTables(shred: Boolean = false, skew: Boolean = false): String =
-      s"${super.loadTables(shred, skew)}\n${loadCopyNumber(shred, skew)}"
+      s"${loadBiospec(shred, skew)}\n${loadOccurrence(shred, skew)}\n${loadCopyNumber(shred, skew)}"
 
   val avgcn = ((cncr("max_copy_number").asNumeric + cncr("min_copy_number").asNumeric
     + cncr("cn_copy_number").asNumeric + NumericConst(0.01, DoubleType)) / NumericConst(3.0, DoubleType)) 
@@ -231,7 +231,7 @@ object ClinicalRunExample extends DriverGene {
                   IfThenElse(And(Cmp(OpEq, cncr("cn_case_uuid"), omr("donorId")),
                       Cmp(OpEq, amr("gene_id"), cncr("cn_gene_id"))),
                     Singleton(Tuple("gene" -> amr("gene_id"), 
-                                "score" -> amr("impact2").asNumeric * (cncr("cn_copy_number").asNumeric + NumericConst(0.01, DoubleType))
+                                "score" -> matchImpactMid * (cncr("cn_copy_number").asNumeric + NumericConst(0.01, DoubleType))
                                   * amr("sift_score").asNumeric * amr("polyphen_score").asNumeric))))),
             List("gene"),
             List("score")))))))))

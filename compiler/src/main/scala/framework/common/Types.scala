@@ -18,7 +18,7 @@ sealed trait Type { self =>
   def isDict: Boolean = false
 
   def attrs: Map[String, Type] = self match {
-    case LabelType(fs) => fs
+    case LabelType(fs) => fs 
     case RecordCType(ms) => ms
     case BagCType(ms) => ms.attrs
     case MatDictCType(LabelType(fs), bag) if fs.isEmpty => 
@@ -33,7 +33,8 @@ sealed trait Type { self =>
     case st @ RecordCType(ms) => 
       val fs = fields.toSet
       val ks = ms.keySet
-      if (fs.isEmpty || (fs & ks).isEmpty) st
+      if (fs.isEmpty) st
+      else if ((fs & ks).isEmpty) RecordCType(Map.empty[String, TupleAttributeType])
       else RecordCType(ms.filter(f => fs(f._1)))
     case BagCType(ms) => ms.project(fields)
     case t => sys.error(s"Issue calling project on $t")
@@ -61,7 +62,7 @@ sealed trait Type { self =>
   }
 
   // For debugging
-  // override def toString: String = ""
+  override def toString: String = ""
 }
 
 trait ReducibleType
@@ -168,10 +169,21 @@ final case class BagCType(tp: Type) extends Type {
 
 }
 
-final case class MatDictCType(keyTp: LabelType, valueTp: BagCType) extends Type {
+final case class MatDictCType(keyTp: LabelType, valueTp: BagCType) extends Type { self => 
   override def isDict: Boolean = true
   def toRecordType(col: String): RecordCType = 
     RecordCType(Map(s"${col}_1" -> keyTp, col -> valueTp))
+
+  def toFlatType(): BagCType = valueTp match {
+    case BagCType(RecordCType(rs)) => BagCType(RecordCType(rs + ("_1" -> keyTp)))
+    case _ => ???
+  }
+
+  override def equals(that: Any): Boolean = that match {
+    case bct:BagCType => self.toFlatType() == bct
+    case mct:MatDictCType => self.keyTp == mct.keyTp && self.valueTp == mct.valueTp
+    case _ => false
+  }
 
 }
 

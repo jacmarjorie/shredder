@@ -8,7 +8,7 @@ import framework.utils.Utils.ind
 object SparkLoaderGenerator extends SparkTypeHandler {
 
   var types: Map[Type, String] = Map()
-  override val bagtype: String = "Seq"
+  override val BAGTYPE: String = "Seq"
 
 
   def generateSchema(tp: List[(String, Type)]): String = 

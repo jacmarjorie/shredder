@@ -68,16 +68,16 @@ trait NRCTranslator extends MaterializeNRC with NRCPrinter {
     }
     case Union(e1, e2) => merge(translate(e1), translate(e2))
     case ForeachUnion(x, e1, e2) => translate(e2) match {
-	  case If(cond, e3, e4 @ None) => 
+	    case If(cond, e3, e4 @ None) => 
         Comprehension(translate(e1), translate(x).asInstanceOf[Variable], cond, e3)
-	  case te2 => 
+	    case te2 => 
         Comprehension(translate(e1), translate(x).asInstanceOf[Variable], constant(true), te2)
     }
     case l:Let => Bind(translate(l.x), translate(l.e1), translate(l.e2))
-    case GroupByKey(be, keys, values, _) => 
+    case GroupByKey(be, keys, values, gname) => 
       val bagExpr = translate(be)
       val v = Variable.freshFromBag(bagExpr.tp)
-      CGroupBy(bagExpr, v, keys, values)
+      CGroupBy(bagExpr, v, keys, values, gname)
     case ReduceByKey(be, keys, values) => 
       val bagExpr = translate(be)
       val v = Variable.freshFromBag(bagExpr.tp)

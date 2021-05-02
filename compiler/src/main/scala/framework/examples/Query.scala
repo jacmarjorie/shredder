@@ -5,7 +5,6 @@ import framework.nrc._
 import framework.plans._
 import framework.loader.csv._
 
-
 /** Base functionality of a query, which allows 
   * a query to be easily ran through various stages o
   * of the pipeline.
@@ -16,7 +15,9 @@ trait Query extends Materialization
   with Shredding
   with NRCTranslator {
 
-  val normalizer = new Finalizer(new BaseNormalizer{})
+  val letOpt: Boolean = false
+  val normal = new BaseNormalizer(letOpt)
+  val normalizer = new Finalizer(normal)
   val baseTag: String = "_2"
 
   val name: String
@@ -30,10 +31,19 @@ trait Query extends Materialization
   def calculus: CExpr = {
     println("RUNNING STANDARD PIPELINE:\n")
     println(quote(program))
-    translate(program)
+    val c = translate(program)
+    println("this calculus")
+    println(Printer.quote(c))
+    c
   }
 
-  def normalize: CExpr = normalizer.finalize(this.calculus).asInstanceOf[CExpr]
+  def normalize: CExpr = {
+    println("running normalizer with "+letOpt)
+    val n = normalizer.finalize(this.calculus).asInstanceOf[CExpr]
+    println("this is normalized")
+    println(Printer.quote(n))
+    n
+  }
   
   def unnest: CExpr = Unnester.unnest(this.normalize)(Map(), Map(), None, baseTag)
 
@@ -52,6 +62,32 @@ trait Query extends Materialization
         println(Printer.quote(fp))
         anfBase.anf(anfer.finalize(fp).asInstanceOf[anfBase.Rep])
     }
+  }
+
+  def optimized(shred: Boolean = false, optLevel: Int = 2, schema: Schema = Schema()): CExpr = {
+    val optimizer = Optimizer(schema)
+    val compiler = if (shred) new ShredOptimizer {} else new BaseCompiler{}
+    val compile = new Finalizer(compiler)
+    val unopt = if (shred){
+      println("SHREDDING THIS")
+      println(quote(program))
+      val (shredded, shreddedCtx) = shredCtx(program)
+      val optShredded = optimize(shredded)
+      val materialized = materialize(optShredded, eliminateDomains = true)
+      val mprogram = materialized.program
+      println("materialized:")
+      println(quote(mprogram))
+      val ncalc = normalizer.finalize(translate(mprogram)).asInstanceOf[CExpr]
+      Unnester.unnest(ncalc)(Map(), Map(), None, "_2")
+    }else this.unnest
+    println("before optimization")
+    println(Printer.quote(unopt))
+    val opt = optLevel match {
+      case 0 => unopt
+      case 1 => optimizer.applyPush(unopt)
+      case _ => optimizer.applyAll(unopt)
+    }
+    compile.finalize(opt).asInstanceOf[LinearCSet]
   }
 
 

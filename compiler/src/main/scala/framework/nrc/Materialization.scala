@@ -211,7 +211,7 @@ trait Materialization extends MaterializationContext {
         assert(l.tp == d.lblTp)   // sanity check
         materializeBagDict(d, a.name, ctx, None, eliminateDomains)
       case _ =>
-        sys.error("Materialization not supported for " + quote(a))
+        sys.error("Materialization not supported for "+ quote(a))
     }
 
   private def materializeBagDict(dict: BagDict,

@@ -105,8 +105,8 @@ trait BaseScalaInterp extends Base{
   def tupledict(fs: Map[String, Rep]): Rep = fs
   def dictunion(d1: Rep, d2: Rep): Rep = d1 // TODO
 
-  def select(x: Rep, p: Rep => Rep, e: Rep => Rep): Rep = { 
-    x.asInstanceOf[List[_]].filter(p.asInstanceOf[Rep => Boolean]).map(e)
+  def select(x: Rep, p: Rep => Rep): Rep = { 
+    x.asInstanceOf[List[_]].filter(p.asInstanceOf[Rep => Boolean])
   }
   def reduce(e1: Rep, f: List[Rep] => Rep, p: List[Rep] => Rep): Rep = {
     e1.asInstanceOf[List[_]].map(v2 => f(tupleVars(v2))) 

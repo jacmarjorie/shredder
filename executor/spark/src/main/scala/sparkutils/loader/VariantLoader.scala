@@ -18,8 +18,11 @@ import sparkutils.Config
   */
 
 case class Call(g_sample: String, call: Int)
+case class CallBig(g_sample: String, call: Long)
 case class Variant(id: String, contig: String, start: Int, reference: String, 
   alternate: String, genotypes: Seq[Call])
+case class VariantBig(id: String, contig: String, start: Long, reference: String, 
+  alternate: String, genotypes: Seq[CallBig])
 case class IVariant(index: Long, contig: String, start: Int, reference: String, 
   alternate: String, genotypes: Seq[Call])
 

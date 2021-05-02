@@ -15,10 +15,6 @@ NRC queries are described natively in Scala using the NRC language defined in `s
 A newly defined query should extend the Query trait (see Query.scala) to leverage various support functions for executing the 
 stages of the pipeline. 
 
-** Disclaimer:** This an experimental system, so defining queries and generating code is a bit involved. This section will be updated as we develop a query parser and a more automated way to generate target code.
-
-#### Example
-
 A Query (defined in `Query.scala`) is a trait that extends the components necessary 
 to execute the pipeline for code generation. When writing a query, we will create 
 an object that extends this. 
@@ -31,7 +27,73 @@ all the inputs that will be used by TPCH queries.
 If we wanted to make one of these for genomic data, we need to reference the 
 loading functions we have defined for our input, describe the type of the input, 
 and then make a set of variables that we will use as reference in our queries. 
-See `src/main/scala/common/Types.scala` for more NRC types.
+See `src/main/scala/common/Types.scala` for more NRC types. 
+
+Trance comes with a prepacked set of types for genomic data sources, most of which 
+are defined in `genomic/DriverGenes.scala` and `genomic/Annotations.scala`. See how to define your 
+own type and use in a query in the `Example: Defining a query from scratch` tutorial below.
+
+#### Example: Defining a query using parser (recommended)
+
+The recommended way to define a query is to use the NRC parser functionality. 
+`genomic/Sharing.scala` has several examples of this. Let us focus in on one: 
+[ExampleQuery](https://github.com/jacmarjorie/trance/blob/sharing/compiler/src/main/scala/framework/examples/genomic/UdfTest.scala)
+
+```
+import framework.common._
+import framework.examples.Query
+import framework.nrc.Parser
+
+object ExampleQuery extends DriverGene {
+  
+  // see file for details
+  override def loadTables(shred: Boolean = false, skew: Boolean = false): String = ...
+  
+  // name to identify your query
+  val name = "ExampleQuery"
+  
+  // a map of input types for the parser
+  val tbls = Map("occurrences" -> occurmids.tp, 
+                  "copynumber" -> copynum.tp, 
+                  "samples" -> samples.tp)
+
+  // a query string that is passed to the parser
+  // note that a list of assignments should be separated with ";"
+  val query = 
+    s"""
+      cnvCases1 <= 
+        for s in samples union 
+          for c in copynumber union 
+            if (s.bcr_aliquot_uuid = c.cn_aliquot_uuid)
+            then {(sid := s.bcr_patient_uuid, gene := c.cn_gene_id, cnum := c.cn_copy_number)};
+
+      hybridScore1 <= 
+          for o in occurrences union
+            {( oid := o.oid, sid1 := o.donorId, cands1 := 
+              ( for t in o.transcript_consequences union
+                 if (t.sift_score > 0.0)
+                 then for c in cnvCases1 union
+                    if (t.gene_id = c.gene && o.donorId = c.sid) then
+                      {( gene1 := t.gene_id, score1 := (c.cnum + 0.01) * if (t.impact = "HIGH") then 0.80 
+                          else if (t.impact = "MODERATE") then 0.50
+                          else if (t.impact = "LOW") then 0.30
+                          else 0.01 )}).sumBy({gene1}, {score1}) )}
+    """
+
+    // finally define the parser, note that it takes the input types 
+    // map as input and pass the query string to the parser to 
+    // generate the program.
+    val parser = Parser(tbls)
+    val program = parser.parse(query).get.asInstanceOf[Program]
+
+}
+```
+
+Now you can follow the 'Code Generation` section below to compile and run a Spark application.
+
+
+#### Example: Defining a query from scratch
+
 
 First, make a file in src/main/scala/examples/Genomic.scala. In this file, 
 define a trait that will be the base for our queries:
@@ -107,33 +169,34 @@ The next step is to write and run an application that will generate the code for
 
 For now code generation is setup to use helper functions specific to benchmarking. See `src/main/scala/generator/spark/App.scala` for examples of how the benchmark experiments were created. Here we will define our own application to call the queries defined in the above section. 
 
-In `src/main/scala/generator/spark/` make a file called GenomicApp.scala. This will be the application you use to generate code from the above. Write the following in the application file:
+In `src/main/scala/generator/spark/` make a file called UdfTestApp.scala. This will be the application you use to generate code from the above. Write the following in the application file:
 
 ```
 package framework.generator.spark
 
 import framework.examples._
+import framework.examples.genomic._
 
-object TestApp extends App {
+object UdfTestApp extends App {
  
   override def main(args: Array[String]){
     
     // runs the standard pipeline
-    AppWriter.flatDataset(GenomicQuery1, "test")
+    AppWriter.runDataset(ExampleQuery, "ExampleTest,standard", optLevel = 1)
     
     // runs the shredded pipeline
-    AppWriter.shredDataset(GenomicQuery1, "test", unshred = true)
+    AppWriter.runDatasetShred(ExampleQuery, "ExampleTest,standard", optLevel = 1)
   }
 }
 ```
 
-Now, run `sbt run` from the `compiler` folder. This should give you four application numbers. Select the application number specific to `framework.generator.spark.TestApp`. You should see the NRC written out to the console and the corresponding plan underneath.
+Now, run `sbt run` from the `compiler` folder. This should give you four application numbers. Select the application number specific to `framework.generator.spark.UdfTestApp`. You should see the NRC written out to the console and the corresponding plan underneath.
 
 ### Execution
 
 After you have completed the above, the code will be written to `shredder/executor/spark/src/main/scala/sparkutils/generated/`. cd to `shredder/exectuor/spark`, compile the jar like in the example (`sbt package`). And run the jar specifying your query: 
 
 ```
-spark-submit --class sparkutils.generated.GenomicQuery1 \
+spark-submit --class sparkutils.generated.ExampleQuery \
   --master "local[*]" target/scala-2.12/sparkutils_2.12-0.1.jar
 ```

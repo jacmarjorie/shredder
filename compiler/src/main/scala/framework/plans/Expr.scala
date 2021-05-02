@@ -6,13 +6,18 @@ import framework.common._
   * Plan Operators and Calculus
   */
 
-trait CExpr {
+trait CExpr { self =>
 
   def tp: Type
+  def vstr: String = self.toString
+  val isCacheUnfriendly: Boolean = false
 
 }
 
-case class InputRef(data: String, tp: Type) extends CExpr 
+case class InputRef(data: String, tp: Type) extends CExpr {
+  override def vstr: String = data
+  override val isCacheUnfriendly: Boolean = true
+}
 
 case class Input(data: List[CExpr]) extends CExpr{
   def tp: BagCType = data match {
@@ -29,6 +34,7 @@ case class Constant(data: Any) extends CExpr{
     case _:String => StringType
     case _:Boolean => BoolType
   }
+  override def vstr: String = s"$data"
 }
 
 case class CUdf(name: String, in: CExpr, tp: Type) extends CExpr
@@ -64,6 +70,8 @@ case class Record(fields: Map[String, CExpr]) extends CExpr{
   def apply(n: String) = fields(n)
   def project(n: List[String]) = Record(fields.filter(f => n.contains(f._1)))
 
+  override def vstr: String = fields.map(f => f._1).mkString(",")
+
 }
 
 case class Tuple(fields: List[CExpr]) extends CExpr {
@@ -84,41 +92,50 @@ case class CGet(e1: CExpr) extends CExpr {
 
 case class Equals(e1: CExpr, e2: CExpr) extends CExpr {
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+"="+e2.vstr
 }
 
 case class Lt(e1: CExpr, e2: CExpr) extends CExpr {
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+"<"+e2.vstr
 }
 
 case class Lte(e1: CExpr, e2: CExpr) extends CExpr{
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+"<="+e2.vstr
 }
 
 case class Gt(e1: CExpr, e2: CExpr) extends CExpr {
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+">"+e2.vstr
 }
 
 case class Gte(e1: CExpr, e2: CExpr) extends CExpr {
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+">="+e2.vstr
 }
 
 case class And(e1: CExpr, e2: CExpr) extends CExpr {
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+"&&"+e2.vstr
 }
 
 case class Not(e1: CExpr) extends CExpr{
   def tp: PrimitiveType = BoolType
+  override def vstr: String = "!"+e1.vstr
 }
 
 case class Or(e1: CExpr, e2: CExpr) extends CExpr{
   def tp: PrimitiveType = BoolType
+  override def vstr: String = e1.vstr+"||"+e2.vstr
 }
 
 case class MathOp(op: OpArithmetic, e1: CExpr, e2: CExpr) extends CExpr {
   def tp: NumericType = NumericType.resolve(e1.tp, e2.tp)
+  override def vstr: String = e1.vstr+op+e2.vstr
 }
 
-case class Project(e1: CExpr, field: String) extends CExpr { self =>
+case class Project(e1: CExpr, field: String) extends CExpr { //self =>
   def tp: Type = e1.tp match {
     case t:RecordCType => t.attrTps get field match {
       case Some(fi) => fi
@@ -132,8 +149,9 @@ case class Project(e1: CExpr, field: String) extends CExpr { self =>
     case t:LabelType => t(field)
     case t:TupleDictCType => t(field)
     case t:BagDictCType => t(field)
-    case _ => sys.error("unsupported projection index "+self)
+    case _ => sys.error(s"unsupported projection index $field in $e1")
   }
+  override def vstr: String = field
 
 }
 
@@ -153,8 +171,9 @@ case class Comprehension(e1: CExpr, v: Variable, p: CExpr, e: CExpr) extends CEx
   }
 }
 
-case class CDeDup(e1: CExpr) extends CExpr{
-  def tp: BagCType = e1.tp.asInstanceOf[BagCType]
+case class CDeDup(in: CExpr) extends CExpr with UnaryOp {
+  def tp: BagCType = in.tp.asInstanceOf[BagCType]
+  override def vstr: String = s"DeDup(${in.vstr})"
 }
 
 // replace all occurences of x with e1 in e1
@@ -182,15 +201,16 @@ case class CReduceBy(e1: CExpr, v1: Variable, keys: List[String], values: List[S
 
 }
 
-case class CGroupBy(e1: CExpr, v1: Variable, keys: List[String], values: List[String]) extends CExpr with CombineOp {
+case class CGroupBy(e1: CExpr, v1: Variable, keys: List[String], values: List[String], groupName: String = "_2") extends CExpr with CombineOp {
   val e1Tp: RecordCType = v1.tp.asInstanceOf[RecordCType]
   val keysTp: RecordCType = RecordCType(keys.map(n => n -> e1Tp(n)).toMap)
   val valuesTp: BagCType = BagCType(RecordCType(values.map(n => n -> e1Tp(n)).toMap))
-  def tp: BagCType = BagCType(RecordCType(keysTp.attrTps ++ Map("_2" -> valuesTp)))
+  def tp: BagCType = BagCType(RecordCType(keysTp.attrTps ++ Map(groupName -> valuesTp)))
 }
 
 case class CNamed(name: String, e: CExpr) extends CExpr {
   def tp: Type = e.tp
+  override def vstr: String = e.vstr
 }
 
 case class LinearCSet(exprs: List[CExpr]) extends CExpr {
@@ -210,17 +230,17 @@ case class CLookup(lbl: CExpr, dict: CExpr) extends CExpr {
   }
 }
 
-case class FlatDict(e: CExpr) extends CExpr {
-  def tp: BagCType = e.tp match {
+case class FlatDict(in: CExpr) extends CExpr with UnaryOp {
+  def tp: BagCType = in.tp match {
     case MatDictCType(lbl, BagCType(RecordCType(ms))) => 
       BagCType(RecordCType(ms + ("_1" -> lbl)))
-    case _ => sys.error(s"unsupported type ${e.tp}")
+    case _ => sys.error(s"unsupported type ${in.tp}")
   }
 }
 
-case class GroupDict(e: CExpr) extends CExpr {
+case class GroupDict(in: CExpr) extends CExpr with UnaryOp {
 
-  def tp: MatDictCType = e.tp match {
+  def tp: MatDictCType = in.tp match {
 
     case BagCType(RecordCType(ms)) => 
       val lbl = ms get "_1" match {
@@ -240,8 +260,9 @@ case class GroupDict(e: CExpr) extends CExpr {
       }
       MatDictCType(lbl, bag)
 
-    case _ => sys.error(s"unsupported type ${e.tp}")
+    case _ => sys.error(s"unsupported type ${in.tp}")
   }
+
 }
 
 case object EmptyCDict extends CExpr {
@@ -287,6 +308,7 @@ case class Variable(name: String, override val tp: Type) extends CExpr { self =>
 
   override def hashCode: Int = (name, tp).hashCode()
   def quote: String = self.name
+  override def vstr: String = self.name
 
 }
 

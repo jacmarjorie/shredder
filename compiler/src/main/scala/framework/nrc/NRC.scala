@@ -1,6 +1,7 @@
 package framework.nrc
 
 import framework.common._
+import framework.utils.Utils
 
 /**
   * Base NRC expressions
@@ -57,20 +58,28 @@ trait NRC extends BaseExpr {
   final case class PrimitiveConst(v: Any, tp: PrimitiveType) extends PrimitiveExpr with Const
 
   trait VarRef {
+
     def varDef: VarDef = VarDef(name, tp)
 
     def name: String
 
     def tp: Type
+
   }
 
   final case class NumericVarRef(name: String, tp: NumericType) extends NumericExpr with VarRef
 
   final case class PrimitiveVarRef(name: String, tp: PrimitiveType) extends PrimitiveExpr with VarRef
 
-  final case class BagVarRef(name: String, tp: BagType) extends BagExpr with VarRef
+  final case class BagVarRef(name: String, tp: BagType) extends BagExpr with VarRef { self =>
+    def union(in: (String, TupleAttributeExpr)*): (BagVarRef, BagExpr) = (self, Singleton(Tuple(in:_*)))
+    def union(in: BagIfThenElse): (BagVarRef, BagIfThenElse) = (self, in)
+  }
 
-  final case class TupleVarRef(name: String, tp: TupleType) extends TupleExpr with VarRef
+  final case class TupleVarRef(name: String, tp: TupleType) extends TupleExpr with VarRef { self => 
+    def in(in: (BagVarRef, BagExpr)): ForeachUnion = ForeachUnion(self.varDef, in._1, in._2)
+    def <--(in: BagVarRef): ForeachUnion = ForeachUnion(self.varDef, in, Singleton(self))
+  }
 
   final case class Udf(name: String, in: PrimitiveExpr, tp: NumericType) extends NumericExpr 
 
@@ -134,12 +143,14 @@ trait NRC extends BaseExpr {
     def apply(fs: (String, TupleAttributeExpr)*): Tuple = Tuple(Map(fs: _*))
   }
 
-  trait Let {
+  trait Let extends Expr {
     def x: VarDef
 
     def e1: Expr
 
     def e2: Expr
+
+    def tp: Type
   }
 
   final case class NumericLet(x: VarDef, e1: Expr, e2: NumericExpr) extends NumericExpr with Let {
@@ -212,6 +223,7 @@ trait NRC extends BaseExpr {
     assert(e2.isEmpty || e1.tp == e2.get.tp)
 
     val tp: BagType = e1.tp
+
   }
 
   final case class TupleIfThenElse(cond: CondExpr, e1: TupleExpr, t2: TupleExpr) extends TupleExpr with IfThenElse {

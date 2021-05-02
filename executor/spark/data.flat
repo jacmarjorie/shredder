@@ -1,3 +1,1 @@
-minPartitions=4
-maxPartitions=10
-threshold=.0025
+datapath=/nfs/home/pavlos/trance/executor/spark/data/tpch
